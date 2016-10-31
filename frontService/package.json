@@ -1,0 +1,10 @@
+{ 
+    "dependencies" :
+    { 
+        "express": "latest",
+        "request": "latest",
+        "request-promise": "latest",
+        "bluebird": "latest",
+        "redis": "latest"
+    }
+}

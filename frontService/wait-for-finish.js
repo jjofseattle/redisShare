@@ -12,11 +12,8 @@ bluebird.promisifyAll(redis.RedisClient.prototype);
 bluebird.promisifyAll(redis.Multi.prototype);
 
 var redisClient = redis.createClient();
-//var etcd = new Etcd('localhost:2379', { timeout: 500000 });
-var etcd = new Etcd();
 
 var app = express();
-var count  = 0;
 
 var luaScript = fs.readFileSync('./fetchTime.lua', { encoding: 'utf8' });
 console.log(luaScript);
@@ -28,7 +25,8 @@ app.get('/expensiveOperation*',  function(req, res) {
         var key = 'expensiveOperation|iter|' + req.query.iter;
         var fetchingTimeKey = key + '|fetchingTime';
         var etcdKey = key + '|etcdKey';
-        var etcdKeyToWait = uuid.v4();
+        var etcd = new Etcd();
+        var etcdKeyToWait = uuid.v1();
         
         redisClient.getAsync(key)
             .then(function(result) {
@@ -45,11 +43,11 @@ app.get('/expensiveOperation*',  function(req, res) {
             });
 
             function doFetching() {
-                // console.log('not in cache');
+                console.log('not in cache');
                 return redisClient.evalAsync(luaScript, 2, fetchingTimeKey, etcdKey, Date.now(), etcdKeyToWait)
                     .then(function(result) {
                         if(!result) {
-                            //console.log('waiting');
+                            console.log('waiting');
                             return waitForResult();
                         }
                         else {
@@ -59,23 +57,19 @@ app.get('/expensiveOperation*',  function(req, res) {
                     });
 
                     function waitForResult() {
-                        return redisClient.getAsync(etcdKey)
-                                .then(etcdPromise)
-                                .then(function(response) {
-                                    console.log('get it from etcd', response);
-                                    res.status(response.statusCode).send(response.message);
-                                });
-                                
-
-                        function etcdPromise(value) {
-                            return new bluebird(getResponse);
-                            function getResponse(resolve, reject) {
-                                etcd.get(value, {wait: true, waitIndex: 1}, function(err, response) {
-                                    if(err) reject(err);
-                                    else resolve(JSON.parse(response.node.value));
-                                });
-                            }
-                        }
+                        return redisClient.getAsync(key)
+                            .then(function(result) {
+                                if(result) {
+                                    console.log('finally in cache while waiting', result);
+                                    res.status(200).send(result);
+                                }
+                                else {
+                                    setTimeout(waitForResult, 1000);
+                                }
+                            })
+                            .catch(function(err) {
+                                setTimeout(waitForResult, 1000);
+                            });
                     }
 
                     function remoteCall() {
@@ -83,42 +77,15 @@ app.get('/expensiveOperation*',  function(req, res) {
                             .then(function(response) {
                                 console.log('get result', response);
                                 return redisClient.setAsync(key, response)
+                                    //.then(setEtcdValue)
                                     .then(result => { redisClient.expire(key, 60); })
                                     .then(result => { res.status(200).send(response); })
-                                    .then(etcdPromise)
                                     .catch(function(err) {
                                         console.log(err, err.trace);
                                     });
-
-                            function etcdPromise(value) {
-                                return new bluebird(setEtcdValue);
-                                function setEtcdValue(resolve, reject) {
-                                    var message = {
-                                        statusCode: 200,
-                                        message: response 
-                                    };
-                                    console.log('JJJJ', etcdKeyToWait);
-                                    
-                                    etcd.set(etcdKeyToWait, JSON.stringify(message), { ttl: 60 }, function(err, response) {
-                                        if(err) {
-                                            reject(err);
-                                        }
-                                        else  {
-                                            console.log('set response', response);
-                                            resolve();
-                                        }
-                                    });
-                                }
-                            }
                             })
                             .catch(function(err) {
-                                console.log(err.statusCode);
-                                var message = {
-                                    statusCode: err.statusCode,
-                                    message: err.message 
-                                };
-                                etcd.set(etcdKeyToWait, JSON.stringify(message),{ ttl: 60 }, console.log);
-
+                                console.log(err, err.trace);
                                 res.status(err.statusCode).send(err.message);
                             })
                     }

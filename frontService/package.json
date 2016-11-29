@@ -5,6 +5,8 @@
         "request": "latest",
         "request-promise": "latest",
         "bluebird": "latest",
-        "redis": "latest"
+        "redis": "latest",
+        "node-etcd": "latest",
+        "node-uuid": "latest"
     }
 }
